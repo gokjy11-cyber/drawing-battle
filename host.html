@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>드로잉 배틀 — 진행자용(Host) v5 · CSV축라벨/QR/중복차단</title>
+<style>
+ body{font-family:system-ui,Apple SD Gothic Neo,Segoe UI,Roboto,Malgun Gothic,sans-serif;margin:0;background:#0b1220;color:#e8eef9}
+ header{padding:14px 18px;background:#0f172a;border-bottom:1px solid #22324a}
+ h1{font-size:18px;margin:0}
+ .wrap{display:grid;grid-template-columns:360px 1fr;gap:14px;padding:14px}
+ .card{background:#0f172a;border:1px solid #22324a;border-radius:14px;padding:14px}
+ label{display:block;font-size:13px;margin:8px 0 4px;color:#9fb3cf}
+ input,textarea,select,button{width:100%;padding:10px;border-radius:10px;border:1px solid #2b3d62;background:#0b1220;color:#e8eef9}
+ textarea{min-height:96px}
+ button{cursor:pointer}
+ .row{display:flex;gap:8px;align-items:center}
+ .muted{color:#9bb0cf;font-size:12px}
+ .pill{display:inline-block;padding:4px 10px;border:1px solid #2b3d62;border-radius:999px;font-size:12px;margin-right:6px}
+ canvas{background:#0b1220;border:1px dashed #324769;border-radius:12px}
+ .score{font-size:22px}
+ .flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+ .list{display:grid;gap:8px}
+ .small{font-size:12px}
+ .danger{color:#ff9aa2}
+ .ok{color:#86efac}
+ .warn{color:#fbbf24}
+ .tag{border:1px solid #2b3d62;border-radius:999px;padding:2px 8px;font-size:11px;margin-left:6px}
+ .code{font-family:ui-monospace,Menlo,Consolas,monospace;background:#091120;color:#cfe4ff;border:1px solid #22324a;border-radius:10px;padding:10px;white-space:pre-wrap}
+ img.qr{margin-top:10px;max-width:100%;background:#fff;padding:8px;border-radius:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>드로잉 배틀 — 진행자용(Host) v5 · CSV축라벨/QR/중복차단</h1>
+</header>
+<div class="wrap">
+  <aside class="card">
+    <h3 style="margin:0 0 6px">1) 라운드 정답(주가 형태) 설정</h3>
+    <div class="list">
+      <div>
+        <label>샘플 선택</label>
+        <select id="sampleSel"></select>
+      </div>
+      <div>
+        <label>CSV/텍스트 업로드 (권장: Date,Close 두 열)</label>
+        <input id="fileCsv" type="file" accept=".csv,.txt" />
+        <div class="muted small">첫 열이 날짜, 두 번째 열이 주가면 축 라벨을 자동 생성합니다. 한 열만 있으면 y로 간주합니다.</div>
+      </div>
+      <div>
+        <label>붙여넣기 (쉼표/줄바꿈 구분)</label>
+        <textarea id="paste"></textarea>
+      </div>
+      <div>
+        <label>직접 그려서 정답 만들기</label>
+        <button id="btnDrawMode">정답 곡선 직접 그리기</button>
+        <div class="muted small">버튼을 누른 뒤 아래 캔버스 전체(좌+우)를 드래그하여 곡선을 그리면 정답으로 저장됩니다.</div>
+      </div>
+      <div class="muted small">정답 시리즈는 내부적으로 0~1 정규화되며, CSV의 날짜·최솟값·최댓값을 축 메타데이터로 포함합니다.</div>
+    </div>
+    <hr style="border:none;border-top:1px solid #22324a;margin:14px 0"/>
+
+    <h3 style="margin:0 0 6px">2) 라운드 코드 생성 & QR</h3>
+    <label>라운드 이름</label>
+    <input id="roundName" placeholder="예: ROUND_A" />
+    <div class="row">
+      <div style="flex:1">
+        <label>제한 시간 (초)</label>
+        <input id="durSec" type="number" value="180" min="30" step="10" />
+      </div>
+      <div style="flex:1">
+        <label>시작 지연 (초)</label>
+        <input id="delaySec" type="number" value="10" min="0" step="5" />
+      </div>
+    </div>
+    <label>참가자 Player 기본 URL</label>
+    <input id="playerUrl" placeholder="예: https://gokjy11-cyber.github.io/main_content/player.html" />
+    <button id="btnMakeCode">라운드 코드 생성</button>
+    <div id="codeBox" class="code" style="margin-top:10px;display:none"></div>
+    <div id="qrBox" style="display:none"></div>
+
+    <hr style="border:none;border-top:1px solid #22324a;margin:14px 0"/>
+
+    <h3 style="margin:0 0 6px">3) 제출 수집/채점 (중복 팀 자동 차단)</h3>
+    <label>참가자 제출(JSON) 불러오기</label>
+    <input id="fileSubs" type="file" multiple accept=".json" />
+    <div id="subsList" class="list"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="btnExportScores">전체 결과 내보내기 (CSV)</button>
+    </div>
+  </aside>
+
+  <main class="card">
+    <div class="flex" style="justify-content:space-between;margin-bottom:8px">
+      <div class="score">프로젝션 화면 (정답 전체는 점선; 참가자 화면엔 좌측만 힌트)</div>
+      <div id="timer" class="pill">대기중</div>
+    </div>
+    <canvas id="cv" width="1000" height="540"></canvas>
+    <div class="muted small" style="margin-top:8px">CSV에서 읽은 축 메타데이터(날짜, 주가범위)를 라운드 코드에 포함합니다.</div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+<script>
+// ===== 유틸 =====
+function lerp(a,b,t){return a*(1-t)+b*t}
+function linResample(arr,N){ const M=arr.length; if(M===0) return []; const out=[]; for(let i=0;i<N;i++){ const u=i/(N-1), x=u*(M-1), j=Math.floor(x), t=x-j; const y=(j+1<M)?lerp(arr[j],arr[j+1],t):arr[M-1]; out.push(y) } return out }
+function normalize01(arr){ const mn=Math.min(...arr), mx=Math.max(...arr); const d=mx-mn||1; return arr.map(v=>(v-mn)/d) }
+function sampleLabels(labels, k=5){ if(!labels||!labels.length) return []; const N=labels.length; if(N<=k) return labels; const out=[]; for(let i=0;i<k;i++){ const idx=Math.round(i*(N-1)/(k-1)); out.push(labels[idx]); } return out }
+function parseCsvSmart(txt){
+  const lines=txt.trim().split(/[\r\n]+/).filter(Boolean);
+  const dates=[], vals=[];
+  for(const ln of lines){ const parts=ln.split(/[ ,;\t]+/).filter(Boolean);
+    if(parts.length>=2 && !isNaN(parseFloat(parts[1]))){ dates.push(parts[0]); vals.push(parseFloat(parts[1])); }
+    else if(parts.length===1 && !isNaN(parseFloat(parts[0]))){ dates.push(''); vals.push(parseFloat(parts[0])); }
+  }
+  return {dates, vals};
+}
+function b64(obj){ return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))) }
+
+// ===== 상태 =====
+let gtSeries = normalize01([0.2,0.25,0.22,0.28,0.35,0.4,0.38,0.44,0.5,0.55,0.6]); // 기본 샘플
+let axisMeta = { xLabels:['Day1','Day2','Day3','Day4','Day5'], yMin:0, yMax:100 };
+let drawMode=false, strokes=[], current=null;
+
+// ===== 캔버스 =====
+const cv=document.getElementById('cv'); const ctx=cv.getContext('2d');
+function pxX(u){ return 40 + u*(cv.width-80) } function pxY01(v){ const pad=30,h=cv.height-2*pad; return pad + (1-v)*h }
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // grid
+  ctx.strokeStyle='#22324a'; ctx.lineWidth=1;
+  for(let i=0;i<=10;i++){ const y=pxY01(i/10); ctx.beginPath(); ctx.moveTo(40,y); ctx.lineTo(cv.width-40,y); ctx.stroke(); }
+  // x labels
+  if(axisMeta && axisMeta.xLabels){ const arr=axisMeta.xLabels; const pos=[0,0.25,0.5,0.75,1]; ctx.fillStyle='#9bb0cf'; ctx.font='12px sans-serif';
+    arr.forEach((lab,idx)=>{ const x=pxX(pos[idx]|| (idx/(arr.length-1))); ctx.fillText(lab, x-24, cv.height-8); }); }
+  // y labels
+  if(axisMeta){ const {yMin,yMax}=axisMeta; const ys=[yMin, (yMin+yMax)/2, yMax]; ctx.fillStyle='#9bb0cf'; ctx.font='12px sans-serif';
+    ys.forEach(v=>{ const ratio=(v-yMin)/((yMax-yMin)||1); const y=pxY01(ratio); ctx.fillText(String(Math.round(v)), 6, y+4); }); }
+  // left hint
+  const N=gtSeries.length, half=Math.floor(N/2);
+  ctx.strokeStyle='#f472b6'; ctx.lineWidth=2; ctx.beginPath(); for(let i=0;i<half;i++){ const u=i/(N-1), x=pxX(u), y=pxY01(gtSeries[i]); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y) } ctx.stroke();
+  // full answer dotted (진행자용 표시)
+  ctx.strokeStyle='rgba(74,222,128,0.45)'; ctx.setLineDash([5,8]); ctx.lineWidth=1.5; ctx.beginPath(); for(let i=0;i<N;i++){ const u=i/(N-1), x=pxX(u), y=pxY01(gtSeries[i]); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y) } ctx.stroke(); ctx.setLineDash([]);
+  if(drawMode){ ctx.strokeStyle='#60a5fa'; ctx.lineWidth=3; strokes.forEach(st=>{ ctx.beginPath(); st.forEach((p,j)=>{ if(j===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y) }); ctx.stroke() }) }
+}
+
+draw();
+
+// ===== CSV/샘플 =====
+const sampleSel=document.getElementById('sampleSel');
+[{name:'샘플 상승',vals:[10,11,12,14,16,18,20,21,23,25],dates:['D1','D2','D3','D4','D5','D6','D7','D8','D9','D10']},
+ {name:'샘플 급등후조정',vals:[40,42,60,90,72,68,65,63,62,61],dates:['D1','D2','D3','D4','D5','D6','D7','D8','D9','D10']}]
+.forEach((s,i)=>{ const opt=document.createElement('option'); opt.value=String(i); opt.textContent=s.name; opt.dataset.vals=JSON.stringify(s.vals); opt.dataset.dates=JSON.stringify(s.dates); sampleSel.appendChild(opt); });
+sampleSel.addEventListener('change',()=>{
+  const opt=sampleSel.selectedOptions[0]; const vals=JSON.parse(opt.dataset.vals); const dates=JSON.parse(opt.dataset.dates);
+  const yMin=Math.min(...vals), yMax=Math.max(...vals); axisMeta={xLabels:sampleLabels(dates,5), yMin, yMax};
+  gtSeries = normalize01(linResample(vals,240)); draw();
+}); sampleSel.selectedIndex=0; sampleSel.dispatchEvent(new Event('change'));
+
+document.getElementById('fileCsv').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{
+    const {dates, vals}=parseCsvSmart(r.result); if(vals.length<5){ alert('유효한 숫자열을 찾지 못했습니다.'); return; }
+    const yMin=Math.min(...vals), yMax=Math.max(...vals);
+    gtSeries = normalize01(linResample(vals,240));
+    const labels = (dates.some(Boolean)? dates: dates.map((_,i)=>`D${i+1}`));
+    axisMeta={ xLabels: sampleLabels(labels,5), yMin, yMax };
+    draw();
+  }; r.readAsText(f,'utf-8');
+});
+
+document.getElementById('paste').addEventListener('blur',e=>{
+  const txt=e.target.value; if(!txt.trim()) return; const {dates, vals}=parseCsvSmart(txt); if(vals.length<5) return;
+  const yMin=Math.min(...vals), yMax=Math.max(...vals);
+  gtSeries = normalize01(linResample(vals,240));
+  const labels = (dates.some(Boolean)? dates: dates.map((_,i)=>`D${i+1}`));
+  axisMeta={ xLabels: sampleLabels(labels,5), yMin, yMax };
+  draw();
+});
+
+// ===== 정답 직접 그리기 =====
+const cvEl=document.getElementById('cv');
+let isDraw=false; let cur=null;
+cvEl.addEventListener('mousedown',e=>{ if(!drawMode) return; isDraw=true; const b=cvEl.getBoundingClientRect(); cur=[{x:e.clientX-b.left,y:e.clientY-b.top}] });
+cvEl.addEventListener('mousemove',e=>{ if(!isDraw) return; const b=cvEl.getBoundingClientRect(); cur.push({x:e.clientX-b.left,y:e.clientY-b.top}); draw(); });
+window.addEventListener('mouseup',()=>{ if(isDraw){ strokes.push(cur); isDraw=false; cur=null; draw(); } });
+
+document.getElementById('btnDrawMode').addEventListener('click',()=>{
+  drawMode=!drawMode; if(!drawMode){
+    const pts=strokes.flat(); if(pts.length<20){ alert('조금 더 길게 그려주세요.'); return; }
+    const xs=pts.map(p=> (p.x-40)/(cv.width-80) ); const ys=pts.map(p=> 1- (p.y-30)/(cv.height-60) );
+    const idx=xs.map((v,i)=>i).sort((a,b)=>xs[a]-xs[b]); const Y=idx.map(i=>ys[i]);
+    const raw = Y.map((v,i)=>v); // 0~1값을 y로 간주
+    gtSeries = normalize01(linResample(raw,240));
+    const labels = Array.from({length:raw.length},(_,i)=>`D${i+1}`);
+    axisMeta={ xLabels: sampleLabels(labels,5), yMin:0, yMax:100 };
+    strokes=[]; draw(); alert('정답 저장 완료');
+  } else {
+    strokes=[]; alert('정답 그리기 모드: 다시 누르면 저장됩니다.');
+  }
+});
+
+// ===== 타이머 & 코드 생성 & QR =====
+let lockUntil=null, roundMeta=null; const timerEl=document.getElementById('timer');
+function tick(){ if(!lockUntil){ timerEl.textContent='대기중'; return; } const now=Date.now(); if(now<roundMeta.startAt){ timerEl.textContent='시작까지 '+Math.ceil((roundMeta.startAt-now)/1000)+'s'; return; } const left=Math.max(0,Math.floor((lockUntil-now)/1000)); timerEl.textContent = left>0?('남은시간 '+left+'s'):'종료'; requestAnimationFrame(tick) }
+
+document.getElementById('btnMakeCode').addEventListener('click',()=>{
+  const name=(document.getElementById('roundName').value||'ROUND');
+  const dur=Math.max(10,parseInt(document.getElementById('durSec').value||180));
+  const delay=Math.max(0,parseInt(document.getElementById('delaySec').value||10));
+  const startAt=Date.now()+delay*1000, endAt=startAt+dur*1000;
+  const payload={ name, startAt, endAt, series: gtSeries, xLabels: axisMeta.xLabels, yMin: axisMeta.yMin, yMax: axisMeta.yMax };
+  const code=b64(payload);
+  document.getElementById('codeBox').style.display='block';
+  document.getElementById('codeBox').textContent=code;
+  roundMeta={startAt,endAt,name}; lockUntil=endAt; tick();
+  const base=(document.getElementById('playerUrl').value||'').trim();
+  const box=document.getElementById('qrBox'); box.innerHTML='';
+  if(base){ const url=`${base}?code=${encodeURIComponent(code)}`; QRCode.toDataURL(url,{width:220},(err,urlData)=>{
+      if(err){alert('QR 생성 오류:'+err);return;}
+      box.style.display='block'; box.innerHTML=`<div class='muted small'>QR 스캔 시 참가자용 Player 접속:</div><img class='qr' src='${urlData}'/><div class='code'>${url}</div>`;
+  }) } else { box.style.display='none'; }
+});
+
+// ===== 제출 수집/채점 (동일) =====
+function dtw(a,b){ const n=a.length,m=b.length; const dp=Array.from({length:n+1},()=>Array(m+1).fill(Infinity)); dp[0][0]=0; for(let i=1;i<=n;i++){ for(let j=1;j<=m;j++){ const c=Math.abs(a[i-1]-b[j-1]); dp[i][j]=c+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]); } } return dp[n][m]/(n+m) }
+function sign(x){return x>0?1:x<0?-1:0}
+function peaks(arr){ const P=[],T=[]; for(let i=1;i<arr.length-1;i++){ if(arr[i]>arr[i-1]&&arr[i]>arr[i+1]) P.push(i); if(arr[i]<arr[i-1]&&arr[i]<arr[i+1]) T.push(i); } return {P,T} }
+function resampleToN(xs,ys,n){ const out=[]; for(let i=0;i<n;i++){ const u=i/(n-1); let j=0; while(j<xs.length-1 && xs[j+1]<u) j++; const t=(u-xs[j])/(xs[j+1]-xs[j]); out.push(ys[j]*(1-t)+ys[j+1]*t) } return out }
+
+function scoreOne(sub){
+  const N=120; const gt=gtSeries; const half=Math.floor(gt.length/2); const gtR=gt.slice(half); const gtXs=Array.from({length:gtR.length},(_,i)=>0.5+i/(gt.length-1)); const ref=resampleToN(gtXs, gtR, N);
+  const pts=sub.strokes; const xs=pts.map(p=>p.x), ys=pts.map(p=>p.y); const idx=xs.map((v,i)=>i).sort((a,b)=>a-b); const X=idx.map(i=>xs[i]); const Y=idx.map(i=>ys[i]); const usr=resampleToN(X,Y,N);
+  const d=dtw(usr,ref); const dtwScore=Math.max(0,Math.min(100,Math.round(100*(1-d/0.15))));
+  let agree=0; for(let i=1;i<N;i++){ if(sign(ref[i]-ref[i-1])===sign(usr[i]-usr[i-1])) agree++; }
+  const dirScore=Math.round(100*agree/(N-1));
+  const pkR=peaks(ref), pkU=peaks(usr);
+  function matchRate(A,B){ if(A.length===0||B.length===0) return 0; const used=new Set(); let hit=0; A.forEach(ai=>{ let best=-1,bd=1e9; B.forEach((bj,j)=>{ if(used.has(j)) return; const d=Math.abs(ai-bj); if(d<bd){ bd=d; best=j; } }); if(bd<=Math.round(N*0.07)){ used.add(best); hit++; } }); return hit/Math.max(A.length,B.length); }
+  const pntScore=Math.round(100*(0.5*matchRate(pkR.P,pkU.P)+0.5*matchRate(pkR.T,pkU.T)));
+  const final=Math.round(0.5*dtwScore+0.3*dirScore+0.2*pntScore);
+  return {final, dtw:dtwScore, direction:dirScore, peaks:pntScore}
+}
+
+const subsList=document.getElementById('subsList');
+const allSubs=[]; const seenTeams=new Set();
+document.getElementById('fileSubs').addEventListener('change', e=>{
+  const files=[...e.target.files]; if(!files.length) return;
+  files.forEach(f=>{ const r=new FileReader(); r.onload=()=>{ try{ const data=JSON.parse(r.result); if(!data || !data.team || !data.strokes){ throw new Error('형식 불일치'); }
+      const team=data.team.trim();
+      if(seenTeams.has(team)){
+        const div=document.createElement('div'); div.className='card'; div.innerHTML=`<div class="row" style="justify-content:space-between"><div><b>${team}</b> <span class="tag warn">중복 제출 무시됨</span></div><div class="muted small">${data.meta?.name||''}</div></div>`; subsList.appendChild(div); return;
+      }
+      seenTeams.add(team);
+      const sc=scoreOne(data); allSubs.push({team, scores:sc});
+      const div=document.createElement('div'); div.className='card'; div.innerHTML=`<div class="row" style="justify-content:space-between"><div><b>${team}</b> <span class="tag ok">채택</span> <span class="muted small">${data.meta?.name||''}</span></div><div><b>${sc.final}</b>점 <span class="muted small">(DTW ${sc.dtw} · 방향 ${sc.direction} · 피크 ${sc.peaks})</span></div></div>`; subsList.appendChild(div);
+    }catch(err){ alert('JSON 파싱 실패: '+f.name) } }; r.readAsText(f,'utf-8'); });
+})
+
+document.getElementById('btnExportScores').addEventListener('click',()=>{
+  if(!allSubs.length){ alert('제출이 없습니다.'); return; }
+  const rows=['team,final,dtw,direction,peaks'];
+  allSubs.forEach(s=>rows.push(`${s.team},${s.scores.final},${s.scores.dtw},${s.scores.direction},${s.scores.peaks}`));
+  const blob=new Blob([rows.join('\n')],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='scores.csv'; a.click(); URL.revokeObjectURL(a.href);
+})
+
+draw();
+</script>
+</body>
+</html>
